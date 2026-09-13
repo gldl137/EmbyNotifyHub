@@ -43,7 +43,7 @@ EmbyNotifyHub 把 Emby 的各种事件（媒体入库、播放、用户、插件
 
 ```text
 EmbyNotifyHub/
-├── docker-compose.yml            # 一键部署（单端口 7000，挂载 ./app/data）
+├── docker-compose.yml            # 一键部署（context=./app，单端口 7000，数据挂载 ./app/data）
 ├── LICENSE
 ├── README.md
 └── app/
@@ -100,17 +100,159 @@ EmbyNotifyHub/
 
 ## 快速开始
 
-### 方式一：Docker（推荐）
+### 方式一：Docker 部署（推荐）
+
+#### 1）前置条件
+
+| 项目 | 要求 |
+|------|------|
+| Docker Engine | 20.10+ |
+| Docker Compose | **v2**（使用 `docker compose` 子命令，不是老的 `docker-compose`） |
+| 磁盘空间 | 约 500 MB（基础镜像 + Python 依赖） |
+
+安装 Docker（Linux 一键脚本，Debian / Ubuntu / CentOS / Fedora 通用）：
+
+```bash
+curl -fsSL https://get.docker.com | sh
+sudo systemctl enable --now docker
+
+# 验证（两条都要能输出版本号）
+docker --version
+docker compose version
+```
+
+- **unraid**：系统自带 Docker，可在「Docker」页面操作，或 SSH 进终端执行本文命令（想用 compose 需装 Compose Manager 插件）。
+- **Windows / macOS**：安装 Docker Desktop，确认已启用 Compose v2。
+- **群晖 / 威联通**：用 Container Manager / Container Station，或 SSH 执行本文命令。
+
+#### 2）获取代码
 
 ```bash
 git clone https://github.com/gldl137/EmbyNotifyHub.git
 cd EmbyNotifyHub
+```
+
+> 服务器无法直连 GitHub 时：可在本地下载 ZIP 上传解压，或用带代理的 git：
+> `git -c http.proxy=http://<代理地址>:<端口> clone https://github.com/gldl137/EmbyNotifyHub.git`
+
+#### 3）准备数据目录与权限（重要，别跳过）
+
+```bash
+mkdir -p ./app/data
+sudo chown -R 1000:1000 ./app/data
+```
+
+容器内以非 root 用户 `appuser`（**uid 1000**）运行，`./app/data` 会挂载为容器内的 `/app/data`，
+用于存放 `config.json`（配置）、`database.sqlite`（事件与通知）、`logs/`（日志）。
+宿主机目录属主不是 1000 时，容器无法写库和写日志，表现为服务启动后 `/health` 异常或日志报 `Permission denied`。
+
+#### 4）按需修改配置（可选）
+
+仓库根目录的 `docker-compose.yml` 内容如下：
+
+```yaml
+services:
+  embynotifyhub:
+    build:
+      context: ./app            # 构建上下文固定为 app/，不要改成根目录
+      dockerfile: Dockerfile
+    image: embynotifyhub:latest
+    container_name: embynotifyhub
+    ports:
+      - "7000:7000"             # 左侧宿主机端口，右侧容器端口不可改
+    volumes:
+      - ./app/data:/app/data    # 数据持久化目录
+    environment:
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+```
+
+| 想改什么 | 改哪一行 | 示例 |
+|----------|----------|------|
+| Web 访问端口 | `ports` 左侧 | `"8080:7000"` → 以后用 `http://IP:8080` 访问 |
+| 数据存放位置 | `volumes` 左侧 | `/mnt/user/appdata/embynotifyhub:/app/data` |
+| 时区 | `environment` | `TZ=Asia/Shanghai` |
+
+#### 5）构建并启动
+
+```bash
 docker compose up -d --build
 ```
 
-启动后访问 `http://<服务器IP>:7000`，在「媒体设置 / 系统设置」里填入 Emby、TMDB、企业微信信息即可。
+首次构建约 1~3 分钟：Python 依赖在**构建阶段**就装进镜像的 `/app/pip-packages`，
+之后重启或重建容器都不会重复 `pip install`；前端产物已随仓库提供（`app/backend/static`），
+**构建过程不需要 Node.js**。
 
-> 数据持久化在宿主机的 `./app/data`（compose 已挂载）。升级只需重新 `docker compose up -d --build`。
+#### 6）验证启动
+
+```bash
+docker compose ps                    # STATE 应为 Up (healthy)
+docker compose logs -f --tail=50     # 跟随日志，Ctrl+C 退出
+curl http://localhost:7000/health    # 期望 {"status":"healthy",...}
+```
+
+浏览器打开 `http://<服务器IP>:7000`，看到 Web 界面即部署成功。
+
+#### 7）首次配置
+
+1. 「媒体设置 → Webhook」：复制 Webhook 地址，填到 Emby 的 Webhook 插件（见下文）。
+2. 「媒体设置 → Emby 服务器」：填地址与 API Key，点「测试」。
+3. 「媒体设置 → TMDB」：填 API Key（需要媒体增强时；访问不通可在此配代理）。
+4. 「媒体设置 → 通知」：添加企业微信群机器人 / 企业微信应用，点「测试」确认能收到消息。
+5. 「系统设置」：按需调整聚合延迟与调试日志。
+
+> 配置保存在 `./app/data/config.json`，重建容器不会丢失；后续调整规则无需改 `docker-compose.yml`。
+
+#### 8）日常运维
+
+| 操作 | 命令 |
+|------|------|
+| 查看状态 | `docker compose ps` |
+| 查看日志 | `docker compose logs -f --tail=100` |
+| 重启 | `docker compose restart` |
+| 停止并删除容器（数据保留） | `docker compose down` |
+| 升级到最新代码 | `git pull && docker compose up -d --build` |
+| 进入容器排查 | `docker compose exec embynotifyhub bash` |
+| 备份数据 | `tar czf embynotifyhub-backup-$(date +%F).tgz ./app/data` |
+| 彻底卸载（含镜像） | `docker compose down --rmi all`，再按需删除 `./app/data` |
+
+#### 9）不用 Compose 的等价命令
+
+```bash
+cd EmbyNotifyHub/app     # 必须在 app/ 目录构建：Dockerfile 内的 COPY backend/... 以 app/ 为上下文根
+docker build -t embynotifyhub:latest .
+
+mkdir -p data && sudo chown -R 1000:1000 data
+docker run -d \
+  --name embynotifyhub \
+  -p 7000:7000 \
+  -v "$(pwd)/data:/app/data" \
+  -e TZ=Asia/Shanghai \
+  --restart unless-stopped \
+  embynotifyhub:latest
+```
+
+#### 10）Docker 常见问题
+
+**Q：构建报 `COPY failed: file not found ... stat backend`？**
+A：构建上下文错了。Dockerfile 在 `app/` 下，其 `COPY backend/...` 以 `app/` 为上下文根，
+必须用仓库自带的 `docker-compose.yml`（`context: ./app`），或手动在 `app/` 目录里 `docker build`。
+
+**Q：拉取 `python:3.12-slim-bookworm` 很慢或失败？**
+A：给 Docker 配置镜像加速器（`/etc/docker/daemon.json` 的 `registry-mirrors`，填你所在网络可用的镜像站），
+或在能联网的机器上 `docker pull` 后 `docker save` / `docker load` 导入。镜像内 apt 与 pip 已使用阿里云源。
+
+**Q：容器 Up 但页面打不开？**
+A：`docker compose logs --tail=100` 看报错；`docker compose ps` 确认端口映射；
+确认仓库内 `app/backend/static/index.html` 存在（缺失通常是构建上下文不对导致前端产物没进镜像）。
+
+**Q：日志报 `Permission denied: /app/data/...`？**
+A：回到第 3 步执行 `sudo chown -R 1000:1000 ./app/data`。
+
+**Q：改了 `app/frontend` 源码，Docker 部署没生效？**
+A：镜像用的是仓库里的构建产物 `app/backend/static`。先本地构建
+（`cd app/frontend && npm install && npm run build`），再 `docker compose up -d --build`。
+
 
 ### 方式二：启动脚本（Linux / unraid）
 

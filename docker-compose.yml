@@ -1,12 +1,15 @@
 services:
-  python-cs:
+  embynotifyhub:
     build:
-      context: .
-      dockerfile: app/Dockerfile
-    image: EmbyNotifyHub
-    container_name: python-cs
+      # 构建上下文固定为 app/（app/Dockerfile 内的 COPY backend/... 以此目录为根）
+      context: ./app
+      dockerfile: Dockerfile
+    image: embynotifyhub:latest
+    container_name: embynotifyhub
     ports:
-      - "7000:7000"                  # 后端服务端口
+      - "7000:7000"                  # 左侧为宿主机端口，如改 "8080:7000" 则用 8080 访问
     volumes:
-      - ./app/data:/app/data         # 数据目录（配置、数据库、日志等）
+      - ./app/data:/app/data         # 数据目录（配置、数据库、日志等），宿主机需 uid 1000 可写
+    environment:
+      - TZ=Asia/Shanghai             # 日志时间时区
     restart: unless-stopped
