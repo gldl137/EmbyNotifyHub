@@ -1,0 +1,62 @@
+# =============================================================================
+# EmbyNotifyHub .gitignore
+# =============================================================================
+
+# ---------- 运行时数据（含配置密钥 / SQLite 数据库 / 日志，绝对不要提交）----------
+app/data/
+app/backend/data/
+data/
+
+# ---------- 环境变量（本地私密配置；模板见 app/backend/.env.example）----------
+.env
+.env.*
+!.env.example
+
+# ---------- 本地依赖目录 ----------
+node_modules/
+app/pip-packages/
+**/pip-packages/
+.pip/
+.venv/
+venv/
+env/
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---------- 前端 ----------
+.vite/
+*.local
+*.timestamp-*.mjs
+# 说明：app/backend/static 是前端构建产物，随仓库提交以便 Docker 直接构建。
+# 若希望改为「构建时自行编译」，取消下面一行注释即可。
+# app/backend/static/
+
+# ---------- 日志 / 临时文件 ----------
+*.log
+logs/
+.run/
+*.pid
+*.bak
+*.tmp
+*.swp
+*~
+
+# ---------- 编辑器 / 系统 ----------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

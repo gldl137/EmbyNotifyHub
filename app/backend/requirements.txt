@@ -1,0 +1,12 @@
+# Web 框架
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# HTTP 客户端
+requests>=2.31.0
+
+# 数据验证
+pydantic>=2.5.0
+
+# 环境变量（可选，如果需要 .env 文件支持）
+python-dotenv>=1.0.0

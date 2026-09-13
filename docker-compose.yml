@@ -1,0 +1,12 @@
+services:
+  python-cs:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+    image: EmbyNotifyHub
+    container_name: python-cs
+    ports:
+      - "7000:7000"                  # 后端服务端口
+    volumes:
+      - ./app/data:/app/data         # 数据目录（配置、数据库、日志等）
+    restart: unless-stopped

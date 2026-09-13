@@ -1,0 +1,49 @@
+# 前端源码（已预构建到 backend/static，无需进镜像）
+frontend/
+
+# 运行时数据目录（宿主机挂载，禁止进镜像）
+data/
+
+# 脚本文件 (scripts/ 为本地测试用, 不进镜像)
+scripts/
+*.bat
+*.ps1
+
+# docker 相关目录
+docker/
+docker-export/
+
+# Python 缓存与虚拟环境
+**/__pycache__/
+**/*.pyc
+**/.venv/
+**/venv/
+
+# 本地测试依赖目录 (pip --target 指定目录, 不进镜像)
+**/pip-packages/
+pip-packages/
+
+# scripts 目录下的本地杂物不进镜像 (启动必需的 *.sh 仍由 Dockerfile COPY 保留)
+**/scripts/*.log
+**/scripts/.run/
+
+# 运行时 pid/日志
+.run/
+**/.run/
+
+# 后端目录下的本地多余文件 (backend/app 代码与 backend/static 产物仍需保留)
+**/backend/data/
+**/backend/.env
+**/*.log
+**/*.md
+**/LICENSE*
+
+# 版本控制与编辑器
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# 系统文件
+.DS_Store
+Thumbs.db
