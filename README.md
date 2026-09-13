@@ -20,14 +20,7 @@ Emby 媒体事件通知中心：接收 Emby Webhook 事件，经 TMDB 增强媒�
 
 ### 方式一：Docker（推荐）
 
-```bash
-git clone https://github.com/gldl137/EmbyNotifyHub.git
-cd EmbyNotifyHub
-mkdir -p ./app/data && sudo chown -R 1000:1000 ./app/data   # 容器内以 uid 1000 运行，需可写
-docker compose up -d --build
-```
-
-`docker-compose.yml`（仓库自带，可直接复制）：
+`docker-compose.yml`：
 
 ```yaml
 services:
@@ -46,7 +39,7 @@ services:
     restart: unless-stopped
 ```
 
-访问 `http://<服务器IP>:7000`。日志：`docker compose logs -f`；升级：`git pull && docker compose up -d --build`。
+访问 `http://<服务器IP>:7000`（数据保存在 `./app/data`）。
 
 ### 方式二：启动脚本（Linux / unraid）
 
