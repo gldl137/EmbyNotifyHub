@@ -193,7 +193,7 @@ Webhook 地址也可以直接在界面的「媒体设置 → Webhook」标签页
 配置有两层，**Web 界面保存的配置优先级更高**（持久化在 `data/config.json`）：
 
 1. **Web 界面**（推荐）：媒体设置（Webhook / Emby 服务器 / TMDB / 通知渠道）、系统设置（聚合延迟 / 调试日志）。
-2. **环境变量**：见 `env` 模板 `app/backend/.env.example`，仅作为默认值兜底。
+2. **环境变量**：可参考 `app/backend/.env.example`，通过进程环境变量传入（Docker 用 `environment:` / `env_file:`，脚本运行前 `export`），仅作为默认值兜底。
 
 | 环境变量 | 默认值 | 说明 |
 |----------|--------|------|
