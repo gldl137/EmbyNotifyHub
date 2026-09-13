@@ -103,7 +103,7 @@ EmbyNotifyHub/
 ### 方式一：Docker（推荐）
 
 ```bash
-git clone https://github.com/<your-name>/EmbyNotifyHub.git
+git clone https://github.com/gldl137/EmbyNotifyHub.git
 cd EmbyNotifyHub
 docker compose up -d --build
 ```
