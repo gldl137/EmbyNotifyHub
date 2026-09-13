@@ -20,39 +20,26 @@ Emby 媒体事件通知中心：接收 Emby Webhook 事件，经 TMDB 增强媒�
 
 ### 方式一：Docker（推荐）
 
-要求：Docker Engine 20.10+ 与 Docker Compose v2（`docker compose` 子命令）。
+要求：Docker Engine 20.10+ / Compose v2。
 
 ```bash
 git clone https://github.com/gldl137/EmbyNotifyHub.git
 cd EmbyNotifyHub
 
-# 数据目录需让容器内用户（uid 1000）可写，否则无法写数据库与日志
-mkdir -p ./app/data && sudo chown -R 1000:1000 ./app/data
-
-docker compose up -d --build
+mkdir -p ./app/data && sudo chown -R 1000:1000 ./app/data   # 容器内以 uid 1000 运行，需可写
+docker compose up -d --build                                # 首次约 1~3 分钟
 ```
 
-构建约 1~3 分钟（Python 依赖在构建阶段装进镜像，前端产物已随仓库提供，无需 Node.js）。
-完成后访问 `http://<服务器IP>:7000`。
+访问 `http://<服务器IP>:7000`。配置 / 数据库 / 日志都在 `./app/data`，重建容器不会丢失；
+改端口或数据目录，编辑 `docker-compose.yml` 的 `ports` / `volumes` 即可。
 
 ```bash
-docker compose ps                  # 状态应为 Up (healthy)
-docker compose logs -f --tail=100  # 查看日志
-git pull && docker compose up -d --build   # 升级
+docker compose logs -f --tail=100           # 日志
+docker compose restart                      # 重启
+git pull && docker compose up -d --build    # 升级
 ```
 
-- 配置（`config.json`）、数据库、日志都在 `./app/data`，重建容器不会丢失
-- 改端口：编辑 `docker-compose.yml` 的 `ports`，例如 `"8080:7000"` 则用 8080 访问
-- 改数据目录：编辑 `volumes` 左侧，例如 `/mnt/user/appdata/embynotifyhub:/app/data`
-
-> **不使用 Compose**
->
-> ```bash
-> cd app     # 必须在 app/ 目录构建：Dockerfile 内的 COPY 以它为上下文根
-> docker build -t embynotifyhub:latest .
-> docker run -d --name embynotifyhub -p 7000:7000 \
->   -v "$(pwd)/data:/app/data" --restart unless-stopped embynotifyhub:latest
-> ```
+> 不用 Compose：`cd app && docker build -t embynotifyhub:latest .`（务必在 `app/` 目录构建）。
 
 ### 方式二：启动脚本（Linux / unraid）
 
