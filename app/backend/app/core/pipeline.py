@@ -18,6 +18,7 @@ from typing import Dict, Any, List, Optional
 
 from app.core.event_models import parse_emby_event
 from app.core.filter import allow_event
+from app.core.constants import normalize_event_type
 from app.core.aggregator import series_aggregator, music_aggregator
 from app.services.tmdb import get_tmdb, enrich_media
 from app.services.event_store import (
@@ -137,6 +138,29 @@ async def process_event(event: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "error": f"处理失败: {str(e)}"}
 
 
+def _extract_video_range(details: Dict[str, Any]) -> str:
+    """从 Emby 项目详情中提取视频动态范围（VideoRange）。
+
+    优先级：
+    1) 顶层 VideoRange
+    2) 顶层 MediaStreams[].VideoRange
+    3) MediaSources[].MediaStreams[].VideoRange
+       —— STRM / 网盘文件等真实媒体信息常只在 MediaSources 内，
+          且需带 ?Fields=MediaSources 才会返回。
+    """
+    vr = details.get("VideoRange") or ""
+    if vr:
+        return vr
+    for ms in (details.get("MediaStreams") or []):
+        if ms.get("Type") == "Video" and ms.get("VideoRange"):
+            return ms.get("VideoRange")
+    for source in (details.get("MediaSources") or []):
+        for ms in (source.get("MediaStreams") or []):
+            if ms.get("Type") == "Video" and ms.get("VideoRange"):
+                return ms.get("VideoRange")
+    return ""
+
+
 async def _enrich_event_data(event: Dict[str, Any]) -> Dict[str, Any]:
     """增强事件数据（优先从 Emby 获取图片和评分，TMDB 作为备用）"""
     media = event.copy()
@@ -200,6 +224,21 @@ async def _enrich_event_data(event: Dict[str, Any]) -> Dict[str, Any]:
                 if community_rating:
                     media["emby_vote"] = float(community_rating)
                     logger.debug(f"[Process] 获取到 Emby 评分: {community_rating}")
+
+                # 补充视频范围/分辨率/显示标题
+                # webhook payload 经常不携带 VideoRange / MediaStreams（HDR 信息所在），
+                # 且 STRM 文件的真实信息只在 MediaSources 内。这里从 Emby 完整详情补齐。
+                if not media.get("video_range"):
+                    vr = _extract_video_range(emby_details)
+                    if vr:
+                        media["video_range"] = vr
+                        logger.debug(f"[Process] 从 Emby 详情补齐 video_range: {vr}")
+                if not media.get("width") and emby_details.get("Width"):
+                    media["width"] = emby_details.get("Width")
+                if not media.get("height") and emby_details.get("Height"):
+                    media["height"] = emby_details.get("Height")
+                if not media.get("display_title") and emby_details.get("DisplayTitle"):
+                    media["display_title"] = emby_details.get("DisplayTitle")
         except Exception as e:
             logger.debug(f"[Process] 获取 Emby 详情失败: {e}")
 
@@ -292,6 +331,33 @@ async def _enrich_event_data(event: Dict[str, Any]) -> Dict[str, Any]:
             # TMDB 失败 → warning，不阻塞流程
             logger.warning(f"[Process] TMDB 查询失败: {e}")
 
+    # 入库剧集：查询媒体库实际已有集数（反映真实库状态，而非本次入库）
+    if event_type == "library.new" and media_type in ("Series", "Episode", "Season"):
+        season_number = event.get("season_number")
+        if season_number:
+            series_id = item.get("SeriesId") or item.get("Id", "")
+            if series_id and tmdb_id:
+                try:
+                    from app.services.emby import get_emby_season_episode_count
+                    owned = get_emby_season_episode_count(
+                        series_id, season_number, server_id, server_name
+                    )
+                    if owned is not None:
+                        media["library_owned_episodes"] = owned
+                        logger.debug(f"[Process] 媒体库第{season_number}季已有集数: {owned}")
+                except Exception as e:
+                    logger.debug(f"[Process] 查询媒体库已有集数失败: {e}")
+                try:
+                    from app.services.tmdb import get_tv_season_info
+                    season_info = get_tv_season_info(tmdb_id, season_number)
+                    if season_info:
+                        if season_info.get("episode_count"):
+                            media["season_total_episodes"] = season_info["episode_count"]
+                        if season_info.get("year"):
+                            media["season_year"] = season_info["year"]
+                except Exception as e:
+                    logger.debug(f"[Process] 查询该季信息失败: {e}")
+
     media["tmdb_poster_url"] = tmdb_poster_url
     media["tmdb_backdrop_url"] = tmdb_backdrop_url
 
@@ -381,6 +447,7 @@ def _build_event_record(event: Dict[str, Any]) -> NotificationEvent:
             width=event.get("width"),
             height=event.get("height"),
             display_title=event.get("display_title") or event.get("deisplay_titl", ""),
+            path=event.get("path") or "",
             video_range=event.get("video_range", "")
         ),
         music=MusicInfo(
@@ -397,7 +464,10 @@ def _build_event_record(event: Dict[str, Any]) -> NotificationEvent:
         series=SeriesInfo(
             episode_count=event.get("episode_count") or event.get("total_episodes"),
             episodes=event.get("all_episodes", []),
-            range=event.get("episode_range", "")
+            range=event.get("episode_range", ""),
+            library_owned_episodes=event.get("library_owned_episodes"),
+            season_total_episodes=event.get("season_total_episodes"),
+            season_year=event.get("season_year")
         )
     )
 
@@ -581,7 +651,10 @@ def _flatten_event_record(event_record: NotificationEvent) -> Dict[str, Any]:
         "episode_count": series.episode_count,
         "total_episodes": series.episode_count,  # 兼容性字段
         "all_episodes": series.episodes,
-        "episode_range": series.range
+        "episode_range": series.range,
+        "library_owned_episodes": series.library_owned_episodes,
+        "season_total_episodes": series.season_total_episodes,
+        "season_year": series.season_year
     }
 
 
@@ -594,6 +667,18 @@ def _get_attr(obj, key, default=None):
     if isinstance(obj, dict):
         return obj.get(key, default)
     return getattr(obj, key, default)
+
+
+def _event_allowed(event_type: str, allowed_events: List[str]) -> bool:
+    """检查事件是否在渠道允许列表中（兼容历史事件别名）
+
+    配置里可能保存了旧事件 ID（如 media.metadataupdate），
+    这里统一归一化后再比较，避免升级后配置失效。
+    """
+    if not allowed_events:
+        return False
+    allowed = {normalize_event_type(e) for e in allowed_events}
+    return normalize_event_type(event_type) in allowed
 
 
 def _server_allowed(allowed_servers: List[str], server_id: str) -> bool:
@@ -642,33 +727,34 @@ async def _send_to_wecom_channels(wecom_msg: Dict[str, Any], event_type: str, se
     channels = []
     channel_names = {}
     
-    # 检查企业微信机器人
-    wecom_webhook = _get_attr(config, 'wecom_webhook', {})
-    webhook_enabled = _get_attr(wecom_webhook, 'enabled', False)
-    webhook_key = _get_attr(wecom_webhook, 'webhook_key', '')
-    webhook_events = _get_attr(wecom_webhook, 'allowed_events', [])
-    webhook_name = _get_attr(wecom_webhook, 'bot_name', '企业微信群机器人')
-    webhook_servers = _get_attr(wecom_webhook, 'allowed_servers', [])
-    
-    if webhook_enabled and webhook_key and event_type in webhook_events and _server_allowed(webhook_servers, server_id):
-        channels.append("wecom_webhook")
-        channel_names["wecom_webhook"] = webhook_name
-    
-    # 检查自定义微信应用通知
+    # 自定义通知（统一支持「企业微信应用」与「企业微信群机器人」两种渠道类型）
+    # 注：旧版独立的 notify.wecom_webhook 主配置已废弃，统一收敛到「自定义通知」体系，
+    # 避免遗留配置在后台偷偷发送、却无法在 UI 关闭（见 config_manager 的迁移逻辑）。
     custom_notifies = _get_attr(config, 'custom_notifies', [])
     for custom in custom_notifies:
         custom_enabled = _get_attr(custom, 'enabled', False)
-        custom_name = _get_attr(custom, 'name', '')
+        if not custom_enabled:
+            continue
+        custom_name = _get_attr(custom, 'name', '') or '未命名通知'
         custom_channel = _get_attr(custom, 'channel_type', 'wecom_app')
         custom_events = _get_attr(custom, 'allowed_events', [])
-        custom_corp_id = _get_attr(custom, 'corp_id', '')
         custom_servers = _get_attr(custom, 'allowed_servers', [])
-        
-        if not custom_enabled or custom_channel != 'wecom_app' or not custom_corp_id:
+
+        if not _event_allowed(event_type, custom_events) or not _server_allowed(custom_servers, server_id):
             continue
-        
-        if event_type in custom_events and _server_allowed(custom_servers, server_id):
+
+        if custom_channel == 'wecom_app':
+            custom_corp_id = _get_attr(custom, 'corp_id', '')
+            if not custom_corp_id:
+                continue
             channel_key = f"wecom_app:{custom_name}"
+            channels.append(channel_key)
+            channel_names[channel_key] = custom_name
+        elif custom_channel == 'wecom_webhook':
+            custom_webhook_key = _get_attr(custom, 'webhook_key', '')
+            if not custom_webhook_key:
+                continue
+            channel_key = f"wecom_webhook:{custom_name}"
             channels.append(channel_key)
             channel_names[channel_key] = custom_name
     
@@ -678,19 +764,6 @@ async def _send_to_wecom_channels(wecom_msg: Dict[str, Any], event_type: str, se
     results = {}
     success = False
     platforms = []
-    
-    # 发送群机器人消息
-    if "wecom_webhook" in channels:
-        try:
-            webhook_result = send_wecom_webhook(webhook_key, wecom_msg)
-            if webhook_result:
-                results["wecom_webhook"] = {"success": True, "name": "企业微信群机器人"}
-                success = True
-                platforms.append("wecom_webhook")
-            else:
-                results["wecom_webhook"] = {"success": False, "name": "企业微信群机器人", "error": "发送失败"}
-        except Exception as e:
-            results["wecom_webhook"] = {"success": False, "name": "企业微信群机器人", "error": str(e)}
     
     # 发送自定义企业微信应用消息
     wecom_app_channels = [c for c in channels if c.startswith("wecom_app:")]
@@ -725,7 +798,34 @@ async def _send_to_wecom_channels(wecom_msg: Dict[str, Any], event_type: str, se
                 results[channel_key] = {"success": False, "name": notify_name, "error": app_result.get("error")}
         except Exception as e:
             results[channel_key] = {"success": False, "name": notify_name, "error": str(e)}
-    
+
+    # 发送自定义企业微信群机器人消息（channel_type == wecom_webhook）
+    wecom_webhook_channels = [c for c in channels if c.startswith("wecom_webhook:")]
+    for channel_key in wecom_webhook_channels:
+        notify_name = channel_key.split(":", 1)[1]
+        custom_config = None
+        for custom in custom_notifies:
+            if _get_attr(custom, 'name', '') == notify_name:
+                custom_config = custom
+                break
+        if not custom_config:
+            results[channel_key] = {"success": False, "name": notify_name, "error": "未找到配置"}
+            continue
+        try:
+            custom_webhook_key = _get_attr(custom_config, 'webhook_key', '')
+            if not custom_webhook_key:
+                results[channel_key] = {"success": False, "name": notify_name, "error": "Webhook Key 为空"}
+                continue
+            webhook_result = send_wecom_webhook(custom_webhook_key, wecom_msg)
+            if webhook_result:
+                results[channel_key] = {"success": True, "name": notify_name}
+                success = True
+                platforms.append(channel_key)
+            else:
+                results[channel_key] = {"success": False, "name": notify_name, "error": "发送失败"}
+        except Exception as e:
+            results[channel_key] = {"success": False, "name": notify_name, "error": str(e)}
+
     return {
         "success": success,
         "platforms": platforms,

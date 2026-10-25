@@ -127,25 +127,14 @@ async def update_notify_config(config: dict):
 
 def is_test_allowed_for_channel(channel: str) -> tuple[bool, str]:
     """检查测试事件是否被允许发送到指定渠道
+
+    测试通知仅用于验证渠道连通性，不受「事件配置」过滤限制，
+    只要渠道类型受支持即可发送。
     返回: (是否允许, 消息)
     """
-    notify_config = config_manager.get("notify", {})
-    
-    # 根据渠道类型获取配置
     if channel in ["wecom", "wecom_webhook"]:
-        channel_config = notify_config.get("wecom_webhook", {})
-        channel_name = "企业微信群机器人"
-    else:
-        return False, f"不支持的渠道: {channel}"
-    
-    # 获取允许的事件列表
-    allowed_events = channel_config.get("allowed_events", DEFAULT_CHANNEL_EVENTS.copy())
-    
-    # 检查测试事件是否在允许列表中
-    if "system.webhooktest" not in allowed_events:
-        return False, "测试通知已被禁用，请在事件配置中勾选「系统测试」事件"
-    
-    return True, ""
+        return True, ""
+    return False, f"不支持的渠道: {channel}"
 
 
 @router.post("/test", response_model=NotifyTestResponse)
@@ -569,13 +558,6 @@ async def test_custom_notify(notify_id: str):
             return NotifyTestResponse(
                 success=False,
                 message="通知配置不存在"
-            )
-        
-        # 检查测试事件是否被允许
-        if "system.webhooktest" not in notify.get("allowed_events", []):
-            return NotifyTestResponse(
-                success=False,
-                message="测试通知已被禁用，请在事件配置中勾选「系统测试」事件"
             )
         
         # 根据渠道类型发送测试消息

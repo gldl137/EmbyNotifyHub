@@ -6,7 +6,7 @@ import os
 import json
 from pathlib import Path
 from typing import Dict, Any, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -60,8 +60,6 @@ DEFAULT_CHANNEL_EVENTS = [
     "playback.stop",
     "item.rate",  # 评分/收藏事件
     "item.unrate",  # 取消评分事件
-    "system.webhooktest",
-    "system.notificationtest",
 ]
 
 
@@ -72,6 +70,20 @@ class WeComWebhookConfig(BaseModel):
     bot_name: str = "Emby 通知助手"
     allowed_events: list = Field(default_factory=lambda: DEFAULT_CHANNEL_EVENTS.copy())
     allowed_servers: list = Field(default_factory=list)  # Emby 服务器 id 列表，为空=全部
+
+    @validator("allowed_events", pre=True)
+    def _normalize_allowed_events(cls, v):
+        # 将历史/其它插件写法的事件 ID 统一为规范事件 ID（如 media.metadataupdate → metadata.update）
+        from app.core.constants import normalize_event_type
+        if not v:
+            return v
+        out, seen = [], set()
+        for e in v:
+            ne = normalize_event_type(e)
+            if ne not in seen:
+                seen.add(ne)
+                out.append(ne)
+        return out
 
 
 class CustomNotifyConfig(BaseModel):
@@ -91,6 +103,19 @@ class CustomNotifyConfig(BaseModel):
     allowed_events: list = Field(default_factory=lambda: DEFAULT_CHANNEL_EVENTS.copy())
     # 服务器过滤
     allowed_servers: list = Field(default_factory=list)  # Emby 服务器 id 列表，为空=全部
+
+    @validator("allowed_events", pre=True)
+    def _normalize_allowed_events(cls, v):
+        from app.core.constants import normalize_event_type
+        if not v:
+            return v
+        out, seen = [], set()
+        for e in v:
+            ne = normalize_event_type(e)
+            if ne not in seen:
+                seen.add(ne)
+                out.append(ne)
+        return out
 
 
 class NotifyConfig(BaseModel):
@@ -160,6 +185,55 @@ class ConfigManager:
             except Exception as e:
                 logger.error(f"加载配置失败: {e}，使用默认配置")
                 self._config = AppConfig()
+
+        # 归一化自定义通知中的事件别名（如 media.metadataupdate → metadata.update）
+        # 内存中处理后，下次保存即持久化为规范事件 ID，前端勾选不会丢失
+        from app.core.constants import normalize_event_type
+        for _n in (self._config.notify.custom_notifies or []):
+            if isinstance(_n, dict) and _n.get("allowed_events"):
+                _seen, _norm = set(), []
+                for _e in _n["allowed_events"]:
+                    _ne = normalize_event_type(_e)
+                    if _ne not in _seen:
+                        _seen.add(_ne)
+                        _norm.append(_ne)
+                _n["allowed_events"] = _norm
+
+        # 迁移遗留的主 wecom_webhook 配置到「自定义通知」体系：
+        # 旧版独立的 notify.wecom_webhook 开关在新版 UI 已无入口，但其配置可能仍残留，
+        # 并被后端默默发送（且无法在 UI 关闭）。这里把它转为一条可见的自定义通知，
+        # 并清空主配置，统一收敛到「自定义通知」，用户可在通知设置中查看/禁用/删除。
+        try:
+            _wh = self._config.notify.wecom_webhook
+            _wh_enabled = getattr(_wh, 'enabled', False)
+            _wh_key = getattr(_wh, 'webhook_key', '') or ''
+            if _wh_enabled and _wh_key:
+                _exists = False
+                for _n in (self._config.notify.custom_notifies or []):
+                    _n_type = _n.get('channel_type') if isinstance(_n, dict) else getattr(_n, 'channel_type', None)
+                    _n_key = _n.get('webhook_key') if isinstance(_n, dict) else getattr(_n, 'webhook_key', None)
+                    if _n_type == 'wecom_webhook' and (_n_key or '') == _wh_key:
+                        _exists = True
+                        break
+                if not _exists:
+                    from uuid import uuid4
+                    _migrated = {
+                        'id': str(uuid4())[:8],
+                        'name': '企业微信群机器人（迁移自旧配置）',
+                        'enabled': True,
+                        'channel_type': 'wecom_webhook',
+                        'webhook_key': _wh_key,
+                        'allowed_events': list(getattr(_wh, 'allowed_events', []) or []),
+                        'allowed_servers': list(getattr(_wh, 'allowed_servers', []) or []),
+                    }
+                    self._config.notify.custom_notifies = list(self._config.notify.custom_notifies or []) + [_migrated]
+                    logger.info("已将遗留的「企业微信群机器人」主配置迁移为自定义通知，请到通知设置中确认/删除")
+                # 清空主配置，统一走「自定义通知」，杜绝后台偷偷发送
+                _wh.enabled = False
+                _wh.webhook_key = ''
+                self._save_config()
+        except Exception as _e:
+            logger.error(f"迁移遗留群机器人配置失败: {_e}")
 
         return self._config
 

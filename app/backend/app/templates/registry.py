@@ -35,13 +35,15 @@ def get_template(event_type: str, media_type: str) -> NotificationTemplate:
         对应的模板实例
     """
     key = (event_type, media_type)
-    
-    # 查找对应模板
     template_class = TEMPLATE_REGISTRY.get(key)
-    
+
+    # 整季(Season)/整剧(Series)入库复用剧集(Episode)模板，避免回退到通用模板丢失剧集标识
+    if template_class is None and media_type in ("Season", "Series"):
+        template_class = TEMPLATE_REGISTRY.get((event_type, "Episode"))
+
     if template_class:
         return template_class()
-    
+
     # 没有找到对应模板，返回通用模板
     return GenericTemplate()
 

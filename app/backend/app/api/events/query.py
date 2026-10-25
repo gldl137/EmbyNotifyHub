@@ -207,6 +207,7 @@ def format_event_for_response(event: dict) -> dict:
             width=event.get('width'),
             height=event.get('height'),
             display_title=event.get('display_title') or event.get('deisplay_titl', ''),
+            path=event.get('path') or '',
             video_range=event.get('video_range', '')
         ).model_dump()
     

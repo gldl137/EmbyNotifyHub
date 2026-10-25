@@ -47,26 +47,39 @@ class MovieTemplate:
         title = event_record.get("title", "")
 
         # 剧集类型特殊处理：显示剧集名 + 集数 + 单集标题
-        if media_type == "Episode":
+        if media_type in ("Episode", "Season", "Series"):
             series_name = event_record.get("series_name", "")
             season_number = event_record.get("season_number")
             episode_number = event_record.get("episode_number")
-            
+
             # 确保有季号，默认为1
             if season_number is None:
                 season_number = 1
-            
-            # 构建集数标识
-            if episode_number is not None:
+
+            # 构建集数标识：整季只显示季号；整剧优先用 Description 解析的集范围；
+            # 其余（单集/聚合）有入库集数则显示集号或范围
+            all_episodes = event_record.get("all_episodes") or []
+            episode_range = event_record.get("episode_range", "")
+            if media_type == "Season":
+                episode_info = f" 第{season_number}季"
+            elif media_type == "Series" and episode_range:
+                # Description 解析出的带季号集范围，如 S02E01-E19, E21-E22
+                episode_info = episode_range
+            elif len(all_episodes) > 1:
+                # 多集（聚合）：显示集范围，如 S01E01-E08
+                nums = sorted(all_episodes)
+                lo, hi = nums[0], nums[-1]
+                episode_info = f"S{season_number:02d}E{lo:02d}-E{hi:02d}"
+            elif episode_number is not None:
                 episode_info = f"S{season_number:02d}E{episode_number:02d}"
             else:
-                episode_info = f"S{season_number:02d}"
-            
+                episode_info = ""
+
             # 优先使用剧集名，如果没有则使用标题
             display_name = series_name if series_name else title
-            
-            # 如果单集标题与剧集名不同，追加单集标题
-            if title and title != series_name:
+
+            # 单集标题与剧集名不同时，追加单集标题（整季/多集不追加）
+            if media_type == "Episode" and len(all_episodes) <= 1 and title and title != series_name:
                 return f"{emoji} {action} 剧集 《{display_name}》{episode_info} {title}"
             else:
                 return f"{emoji} {action} 剧集 《{display_name}》{episode_info}"
@@ -109,8 +122,8 @@ class MovieTemplate:
         """构建第一行：年份、质量、评分、服务器"""
         parts = []
         
-        # 年份和地区
-        year = event_record.get("year")
+        # 年份和地区：剧集优先用该季实际首播年份（而非整剧首播年）
+        year = event_record.get("season_year") or event_record.get("year")
         region = event_record.get("region_category", "")
         if year and region:
             parts.append(f"📅年份：{year} ｜ {region}")
@@ -176,19 +189,20 @@ class MovieTemplate:
         return ""
 
     def _build_library_progress(self, event_record: Dict[str, Any]) -> str:
-        """构建入库进度行（仅入库事件且为剧集类型）"""
+        """构建入库进度行（仅入库事件且为剧集类型）
+
+        进度分母统一使用「该季总集数」，绝不回退到整剧总集数，
+        避免标题是 S02 却显示整剧 53 集这种错位。
+        """
         media_type = event_record.get("media_type", "")
 
         # 只有剧集类型才显示进度
         if media_type not in ("Series", "Episode"):
             return ""
 
-        # 支持 total_episodes 和 episode_count 两种字段名
+        # 支持 total_episodes 和 episode_count 两种字段名（整剧，仅最后兜底用）
         total_episodes = event_record.get("total_episodes") or event_record.get("episode_count")
         tv_status = event_record.get("tv_status", "")
-
-        if not total_episodes:
-            return ""
 
         status_cn = ""
         if tv_status == "Ended":
@@ -200,22 +214,43 @@ class MovieTemplate:
         elif tv_status == "In Production":
             status_cn = "【制作中】"
 
-        all_episodes = event_record.get("all_episodes", [])
-        if all_episodes:
-            max_episode = max(all_episodes)
-            remaining = total_episodes - max_episode
+        # 该季理论总集数（来自 TMDB 按季查询）；整剧总集数仅作最后兜底
+        season_total = event_record.get("season_total_episodes")
+        # 本次入库的集数信息
+        all_episodes = event_record.get("all_episodes", []) or []
+        episode_number = event_record.get("episode_number")
+        # 媒体库真实已有集数（来自 Emby 查询）
+        owned = event_record.get("library_owned_episodes")
+
+        def _fmt(cur: int, total: int) -> str:
+            remaining = total - cur
             if remaining > 0:
-                return f"📊进度：{max_episode}/{total_episodes}集  还剩{remaining}集{status_cn}"
-            else:
-                return f"📊进度：{max_episode}/{total_episodes}集  ✅已完结{status_cn}"
-        else:
-            episode_number = event_record.get("episode_number")
+                return f"📊进度：已入库{cur}/{total}集  还剩{remaining}集{status_cn}"
+            return f"📊进度：已入库{cur}/{total}集  ✅已完结"
+
+        # 1) 媒体库真实已有 / 该季总（最佳，分子分母都精准）
+        if owned is not None and season_total:
+            return _fmt(owned, season_total)
+
+        # 2) 有该季总，但 Emby 查询失败（无 owned）→ 用本次入库集数作为分子
+        if season_total:
+            if all_episodes:
+                cur = len(all_episodes) if len(all_episodes) > 1 else all_episodes[0]
+                return _fmt(cur, season_total)
             if episode_number:
-                remaining = total_episodes - episode_number
-                if remaining > 0:
-                    return f"📊进度：{episode_number}/{total_episodes}集  还剩{remaining}集{status_cn}"
-                else:
-                    return f"📊进度：{episode_number}/{total_episodes}集  ✅已完结{status_cn}"
+                return _fmt(episode_number, season_total)
+
+        # 3) 连该季总都没有（TMDB 按季失败）→ 回退整剧总集数兜底
+        if not total_episodes:
+            if media_type == "Episode" and episode_number:
+                return f"📺第 {episode_number} 集"
+            return ""
+
+        if all_episodes:
+            cur = len(all_episodes) if len(all_episodes) > 1 else all_episodes[0]
+            return _fmt(cur, total_episodes)
+        if episode_number:
+            return _fmt(episode_number, total_episodes)
         return ""
     
     def _build_line2(self, event_record: Dict[str, Any]) -> str:

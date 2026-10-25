@@ -233,8 +233,6 @@ EVENT_CLASS_MAP = {
     "library.new": LibraryEvent,
     "library.new.music": LibraryEvent,
     "library.deleted": LibraryEvent,
-    "media.metadataupdate": LibraryEvent,
-    "media.imageupdate": LibraryEvent,
     
     # ========== 评分事件 ==========
     "item.rate": RateEvent,
@@ -294,21 +292,16 @@ EVENT_CLASS_MAP = {
     # ========== 外部事件 ==========
     "external.notification": SystemEvent,
     
-    # ========== 神医助手事件 ==========
-    "collection.items.added": SystemEvent,
-    "collection.items.removed": SystemEvent,
-    "shenyi.favoriteupdate": SystemEvent,
-    "shenyi.introupdate": SystemEvent,
-    "shenyi.collection.added": SystemEvent,
-    "shenyi.collection.removed": SystemEvent,
-    "deep.delete": LibraryEvent,  # 神医助手深度删除事件
+    # ========== 媒体库扩展事件（Emby 原生） ==========
+    "metadata.update": LibraryEvent,    # 媒体元数据更新
+    "image.update": LibraryEvent,       # 媒体图像更新
 
-    # ========== IntroSkip 插件事件 ==========
-    "introskip.update": LibraryEvent,  # 片头片尾标记更新
-    
-    # ========== 测试事件 ==========
-    "system.webhooktest": TestEvent,
-    "system.notificationtest": TestEvent,
+    # ========== 神医助手（StrmAssistant）事件 ==========
+    "favorites.update": LibraryEvent,   # 最爱有更新
+    "introskip.update": LibraryEvent,   # 片头片尾已更新（片头/片尾共用该 ID）
+    "deep.delete": LibraryEvent,        # 媒体深度删除
+    "collection.items.added": SystemEvent,    # 合集项目已添加
+    "collection.items.removed": SystemEvent,  # 合集项目已移除
 }
 
 
@@ -331,11 +324,14 @@ def parse_emby_event(data: Dict[str, Any]) -> Dict[str, Any]:
     import re
     from app.utils.logger import get_logger
     from app.utils.tmdb_id_extractor import extract_tmdb_id
-    from app.core.constants import get_event_info
+    from app.core.constants import get_event_info, normalize_event_type
     
     logger = get_logger(__name__)
     
-    event_type = data.get("Event", "")
+    # 原始事件名（可能来自不同插件版本/历史写法）
+    event_type_raw = data.get("Event", "")
+    # 归一化为规范事件 ID（如 assistant.favorite.updated → favorites.update）
+    event_type = normalize_event_type(event_type_raw)
     
     # 获取对应的事件类
     event_class = EVENT_CLASS_MAP.get(event_type, EmbyEvent)
@@ -402,6 +398,7 @@ def parse_emby_event(data: Dict[str, Any]) -> Dict[str, Any]:
             "source": event_info["source"],
             "plugin": event_info["plugin"],
             "server_id": server_id,
+            "event_raw": event_type_raw,  # 原始事件名（排查用）
         })
 
         return parsed
@@ -427,6 +424,7 @@ def parse_emby_event(data: Dict[str, Any]) -> Dict[str, Any]:
                 "emoji": event_info["emoji"],
                 "source": event_info["source"],
                 "plugin": event_info["plugin"],
+                "event_raw": event_type_raw,
             })
         except:
             pass
@@ -456,10 +454,20 @@ def _parse_media_fields(item: Dict[str, Any], parsed: Dict[str, Any]) -> None:
     parsed["series_image_tag"] = item.get("SeriesPrimaryImageTag", "")
     parsed["width"] = item.get("Width")
     parsed["height"] = item.get("Height")
-    parsed["video_range"] = item.get("VideoRange", "")
+    # 动态范围优先取顶层 VideoRange；很多 webhook（如 playback.*）不放在顶层，
+    # 而是在 Item.MediaStreams[].VideoRange，这里兜底遍历媒体流提取。
+    vr = item.get("VideoRange", "")
+    if not vr:
+        for ms in (item.get("MediaStreams") or []):
+            if ms.get("Type") == "Video" and ms.get("VideoRange"):
+                vr = ms.get("VideoRange")
+                break
+    parsed["video_range"] = vr
     parsed["bit_depth"] = item.get("BitDepth")
     parsed["display_title"] = item.get("DisplayTitle", "")
     parsed["frame_rate"] = item.get("RealFrameRate")
+    # 文件路径（含文件名），用于 HDR/编码/分辨率的文件名兜底解析
+    parsed["path"] = item.get("Path", "")
     
     # 图片标签
     image_tags = item.get("ImageTags", {})
@@ -537,32 +545,10 @@ def _parse_library_event(data: Dict[str, Any], event_type: str, timestamp: str, 
     """解析入库事件"""
     item = data.get("Item", {})
 
-    # 从 Item 获取基本信息
+    # 从 Item 获取基本信息（Series 类型的 ParentIndexNumber/IndexNumber 通常为 None）
     series_name = item.get("SeriesName", "")
     season_number = item.get("ParentIndexNumber")
     episode_number = item.get("IndexNumber")
-
-    # 从 Description 提取集数信息（如果是 Series 类型多集入库）
-    description = data.get("Description", "")
-    episode_range = ""
-    all_episodes = []
-    if description and not series_name and item.get("Type") == "Series":
-        # 解析格式：S01 E01-E04 或 S01 E05
-        import re
-        match = re.search(r'S(\d+)\s+E(\d+)(?:-E?(\d+))?', description)
-        if match:
-            season_number = int(match.group(1))
-            start_ep = int(match.group(2))
-            end_ep = match.group(3)
-            if end_ep:
-                episode_range = f"E{start_ep:02d}-E{int(end_ep):02d}"
-                # 生成所有集数的列表 [1, 2, 3, 4]
-                all_episodes = list(range(start_ep, int(end_ep) + 1))
-            else:
-                episode_range = f"E{start_ep:02d}"
-                all_episodes = [start_ep]
-            # 如果是多集，使用第一集作为 episode_number
-            episode_number = start_ep
 
     parsed = {
         "event": event_type,
@@ -574,11 +560,55 @@ def _parse_library_event(data: Dict[str, Any], event_type: str, timestamp: str, 
         "episode_number": episode_number,
         "series_id": item.get("SeriesId", ""),
         "series_image_tag": item.get("SeriesPrimaryImageTag", ""),
-        "episode_range": episode_range,
-        "all_episodes": all_episodes,
+        "episode_range": "",
+        "all_episodes": [],
+        # 神医助手事件会携带 User（如最爱有更新的收藏用户、深度删除的操作者）
+        "user_name": data.get("User", {}).get("Name", "") if isinstance(data.get("User"), dict) else "",
     }
 
+    # 先填充基础字段（含从 Item 取的 season/episode，对 Series 通常为 None）
     _parse_media_fields(item, parsed)
+
+    # 从 Description 提取集数信息（Series 类型多集入库，如 "S02 E01-E19, E21-E22"）
+    # 必须放在 _parse_media_fields 之后，否则会被 Item 的 None 覆盖
+    description = data.get("Description", "")
+    if description and not parsed.get("series_name") and item.get("Type") == "Series":
+        import re
+        from collections import OrderedDict
+        segments = []  # [(season, start_ep, end_ep)]
+        current_season = None
+        for m in re.finditer(r'(?:S(\d+)\s+)?E(\d+)(?:-E?(\d+))?', description):
+            s, start, end = m.group(1), m.group(2), m.group(3)
+            if s:
+                current_season = int(s)
+            if current_season is None:
+                current_season = 1
+            start_ep = int(start)
+            end_ep = int(end) if end else start_ep
+            segments.append((current_season, start_ep, end_ep))
+
+        if segments:
+            all_eps = []
+            by_season = OrderedDict()
+            for season, start_ep, end_ep in segments:
+                by_season.setdefault(season, []).append((start_ep, end_ep))
+                all_eps.extend(range(start_ep, end_ep + 1))
+            # 同季续段省略季号，贴合 Emby 原样：S02E01-E19, E21-E22
+            parts = []
+            for season, ranges in by_season.items():
+                sub = []
+                for start_ep, end_ep in ranges:
+                    if start_ep == end_ep:
+                        sub.append(f"E{start_ep:02d}")
+                    else:
+                        sub.append(f"E{start_ep:02d}-E{end_ep:02d}")
+                parts.append(f"S{season:02d}" + ", ".join(sub))
+            parsed["episode_range"] = ", ".join(parts)
+            parsed["all_episodes"] = all_eps
+            # 首段作为 season_number 与 episode_number
+            parsed["season_number"] = segments[0][0]
+            parsed["episode_number"] = segments[0][1]
+
     return parsed
 
 

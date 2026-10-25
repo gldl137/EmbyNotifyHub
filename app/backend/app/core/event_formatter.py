@@ -273,7 +273,13 @@ def build_event_content(event_record: dict) -> str:
         # 支持 total_episodes 和 episode_count 两种字段名
         total_episodes = event_record.get("total_episodes") or event_record.get("episode_count")
         tv_status = event_record.get("tv_status", "")
-        if total_episodes:
+        if not total_episodes:
+            # 没有总集数（TMDB 未提供）时，单集仍显示当前集号，避免完全空白
+            if media_type == "Episode":
+                ep = event_record.get("episode_number")
+                if ep:
+                    lines.append(f"📺第 {ep} 集")
+        else:
             status_cn = ""
             if tv_status == "Ended":
                 status_cn = "【已完结】"
@@ -283,7 +289,7 @@ def build_event_content(event_record: dict) -> str:
                 status_cn = "【已取消】"
             elif tv_status == "In Production":
                 status_cn = "【制作中】"
-            
+
             all_episodes = event_record.get("all_episodes", [])
             if all_episodes:
                 max_episode = max(all_episodes)

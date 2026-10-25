@@ -98,27 +98,6 @@ EVENT_MAP = {
         "source": "emby",
         "plugin": "none",
     },
-    "media.deepdelete": {
-        "category": EventCategory.LIBRARY,
-        "name": "深度删除",
-        "emoji": "🗑️",
-        "source": "emby",
-        "plugin": "none",
-    },
-    "media.metadataupdate": {
-        "category": EventCategory.ASSISTANT,
-        "name": "元数据更新",
-        "emoji": "📝",
-        "source": "emby",
-        "plugin": "shenyi",
-    },
-    "media.imageupdate": {
-        "category": EventCategory.ASSISTANT,
-        "name": "图像更新",
-        "emoji": "🖼️",
-        "source": "emby",
-        "plugin": "shenyi",
-    },
 
     # ========== 用户 ==========
     "item.rate": {
@@ -389,46 +368,20 @@ EVENT_MAP = {
         "plugin": "none",
     },
 
-    # ========== 神医助手 ==========
-    "collection.items.added": {
-        "category": EventCategory.ASSISTANT,
-        "name": "合集项目已添加",
-        "emoji": "📂",
-        "source": "emby",
-        "plugin": "shenyi",
-    },
-    "collection.items.removed": {
-        "category": EventCategory.ASSISTANT,
-        "name": "合集项目已移除",
-        "emoji": "🗑️",
-        "source": "emby",
-        "plugin": "shenyi",
-    },
-    "assistant.favorite.updated": {
+    # ========== 神医助手（StrmAssistant） ==========
+    # 事件 ID 与插件源码 Notification/CustomNotifications.cs、
+    # Common/NotificationApi.cs 中注册的 EventId 保持一致
+    "favorites.update": {
         "category": EventCategory.ASSISTANT,
         "name": "最爱有更新",
         "emoji": "⭐",
         "source": "emby",
         "plugin": "shenyi",
     },
-    "assistant.intro.updated": {
+    "introskip.update": {
         "category": EventCategory.ASSISTANT,
         "name": "片头片尾已更新",
         "emoji": "🎬",
-        "source": "emby",
-        "plugin": "shenyi",
-    },
-    "assistant.collection.added": {
-        "category": EventCategory.ASSISTANT,
-        "name": "合集项目已添加",
-        "emoji": "📂",
-        "source": "emby",
-        "plugin": "shenyi",
-    },
-    "assistant.collection.removed": {
-        "category": EventCategory.ASSISTANT,
-        "name": "合集项目已移除",
-        "emoji": "🗑️",
         "source": "emby",
         "plugin": "shenyi",
     },
@@ -441,31 +394,74 @@ EVENT_MAP = {
         "action": "deep_delete",
     },
 
-    # ========== IntroSkip 插件 ==========
-    "introskip.update": {
-        "category": EventCategory.PLUGIN,
-        "name": "片头片尾标记更新",
-        "emoji": "⏭️",
+    # ========== 媒体库扩展事件（Emby 原生） ==========
+    "metadata.update": {
+        "category": EventCategory.ASSISTANT,
+        "name": "媒体元数据更新",
+        "emoji": "📝",
         "source": "emby",
-        "plugin": "introskip",
+        "plugin": "shenyi",
+    },
+    "image.update": {
+        "category": EventCategory.ASSISTANT,
+        "name": "媒体图像更新",
+        "emoji": "🖼️",
+        "source": "emby",
+        "plugin": "shenyi",
+    },
+    "collection.items.added": {
+        "category": EventCategory.ASSISTANT,
+        "name": "合集项目已添加",
+        "emoji": "📂",
+        "source": "emby",
+        "plugin": "shenyi",
+    },
+    "collection.items.removed": {
+        "category": EventCategory.ASSISTANT,
+        "name": "合集项目已移除",
+        "emoji": "🗂️",
+        "source": "emby",
+        "plugin": "shenyi",
     },
 
-    # ========== 测试 ==========
-    "system.webhooktest": {
-        "category": None,  # 测试事件不归类
-        "name": "Webhook 测试",
-        "emoji": "🧪",
-        "source": "emby",
-        "plugin": "none",
-    },
-    "system.notificationtest": {
-        "category": None,
-        "name": "通知测试",
-        "emoji": "🧪",
-        "source": "emby",
-        "plugin": "none",
-    },
 }
+
+
+# ============================== 事件别名归一化 ==============================
+
+# 历史配置或其它插件曾使用的事件 ID → 规范事件 ID
+# 目的：无论 Emby 侧发来哪种写法，都能命中同一份事件定义与渠道配置
+EVENT_ALIAS_MAP = {
+    # 神医助手：最爱有更新
+    "assistant.favorite.updated": "favorites.update",
+    "shenyi.favoriteupdate": "favorites.update",
+    # 神医助手：片头片尾已更新（旧版归类为 IntroSkip 插件）
+    "assistant.intro.updated": "introskip.update",
+    "shenyi.introupdate": "introskip.update",
+    "introskip.updated": "introskip.update",
+    # 神医助手：媒体深度删除
+    "media.deepdelete": "deep.delete",
+    # Emby 原生：媒体元数据更新 / 媒体图像更新
+    "media.metadataupdate": "metadata.update",
+    "media.imageupdate": "image.update",
+    # 合集项目添加/移除（兼容不同版本/插件写法）
+    "assistant.collection.added": "collection.items.added",
+    "assistant.collection.removed": "collection.items.removed",
+    "shenyi.collection.added": "collection.items.added",
+    "shenyi.collection.removed": "collection.items.removed",
+    "collection.item.added": "collection.items.added",
+    "collection.item.removed": "collection.items.removed",
+    "collection.added": "collection.items.added",
+    "collection.removed": "collection.items.removed",
+}
+
+
+def normalize_event_type(event_type: str) -> str:
+    """将事件 ID 归一化为规范事件 ID（未收录的原样返回）"""
+    if not event_type:
+        return event_type
+    key = str(event_type).strip()
+    return EVENT_ALIAS_MAP.get(key, key)
 
 
 # ============================== 二级动作系统 ==============================
@@ -484,6 +480,8 @@ def resolve_action(event_type: str, data: dict) -> str:
     Returns:
         动作标识符
     """
+    event_type = normalize_event_type(event_type)
+
     if event_type == "item.rate":
         is_favorite = None
 
@@ -523,7 +521,7 @@ def get_event_info(event_type: str, data: dict = None) -> dict:
 
     Returns:
         {
-            "event": 原始事件名,
+            "event": 规范事件 ID,
             "category": 一级分类,
             "action": 二级动作,
             "name": 显示名称,
@@ -532,6 +530,7 @@ def get_event_info(event_type: str, data: dict = None) -> dict:
             "plugin": 插件,
         }
     """
+    event_type = normalize_event_type(event_type)
     event_def = EVENT_MAP.get(event_type, {})
 
     # 解析二级动作（优先使用已解析的 action 字段）
@@ -691,8 +690,6 @@ DEFAULT_ALLOW_EVENTS = [
     "library.new",
     "playback.start",
     "playback.stop",
-    "system.webhooktest",
-    "system.notificationtest",
 ]
 
 # 默认允许的媒体类型

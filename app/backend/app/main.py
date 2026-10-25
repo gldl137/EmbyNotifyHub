@@ -136,7 +136,7 @@ app.include_router(events_router)
 @app.get("/health")
 async def health_check():
     """健康检查端点"""
-    return {"status": "healthy", "service": "EmbyNotifyHub", "version": "1.01"}
+    return {"status": "healthy", "service": "EmbyNotifyHub", "version": "1.0.3"}
 
 
 # 获取静态文件目录路径
@@ -148,6 +148,16 @@ if os.path.exists(static_dir):
     assets_dir = os.path.join(static_dir, "assets")
     if os.path.exists(assets_dir):
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    # 站点图标（浏览器标签页）；必须在 SPA 兜底路由之前注册，否则会被返回 index.html
+    @app.get("/favicon.ico")
+    @app.get("/favicon.svg")
+    async def serve_favicon():
+        for name in ("favicon.ico", "favicon.svg"):
+            fp = os.path.join(static_dir, name)
+            if os.path.exists(fp):
+                return FileResponse(fp)
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
 
     # 根路径返回 index.html
     @app.get("/")

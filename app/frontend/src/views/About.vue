@@ -15,7 +15,7 @@
           <div class="app-icon">📺</div>
           <div class="app-info">
             <h3 class="app-name">{{ aboutInfo.project_name || 'EmbyNotifyHub' }}</h3>
-            <span class="app-version">v{{ aboutInfo.version || '1.0.0' }}</span>
+            <span class="app-version">V{{ aboutInfo.version || '1.0.3' }}</span>
           </div>
         </div>
 

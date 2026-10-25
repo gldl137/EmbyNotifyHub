@@ -151,7 +151,7 @@ async def get_system_info():
             last_notify = last_event.get("notification_sent_at")
         
         data = {
-            "version": "1.01",
+            "version": "1.0.3",
             "uptime": f"{days} 天 {hours} 小时 {minutes} 分钟",
             "uptime_seconds": uptime_seconds,
             "event_count": len(all_events),
@@ -228,7 +228,7 @@ async def get_about_info():
         about_data = {
             # 核心信息
             "project_name": "EmbyNotifyHub",
-            "version": "1.01",
+            "version": "1.0.3",
             "developer": "EmbyNotifyHub Contributors",
             "description": "Emby 媒体事件通知中心 - 接收 Emby Webhook，通过企业微信发送图文通知",
             

@@ -104,8 +104,14 @@ class MediaProfile(BaseModel):
     
     @classmethod
     def from_emby_data(cls, width: Optional[int], height: Optional[int],
-                       display_title: str = "", video_range: str = "") -> "MediaProfile":
-        """从 Emby 数据创建 MediaProfile"""
+                       display_title: str = "", video_range: str = "",
+                       path: str = "") -> "MediaProfile":
+        """从 Emby 数据创建 MediaProfile
+
+        HDR / 编解码器判定优先级：
+        1) Emby 真实字段 video_range（最准，但 webhook 经常不携带，且 STRM 文件常缺失）
+        2) 文件名 / 路径兜底（多数片源命名含 HDR10 / Dolby Vision / 4K 等标记）
+        """
         profile = cls()
 
         # 分辨率（支持只有 width 或 height 的情况）
@@ -124,9 +130,21 @@ class MediaProfile(BaseModel):
             profile.resolution = f"{w}p"
         elif h > 0:
             profile.resolution = f"{h}p"
+        else:
+            # 兜底：从标题/路径提取分辨率标记
+            _tl = ((display_title or "") + " " + (path or "")).lower()
+            if "4k" in _tl or "2160p" in _tl:
+                profile.resolution = "4K"
+            elif "1080p" in _tl or "1080i" in _tl:
+                profile.resolution = "1080p"
+            elif "720p" in _tl:
+                profile.resolution = "720p"
 
-        # 从 display_title 提取 codec 和 hdr
-        dt_lower = (display_title or "").lower()
+        # 合并 display_title 与 path 作为关键词搜索源
+        # webhook 的 Item 通常不带 VideoRange / MediaStreams（STRM 尤其），
+        # 而 HDR 标记常写在文件名里（如 "...2160p HDR10 - 夸克网盘.strm"）
+        search_text = (display_title or "") + " " + (path or "")
+        dt_lower = search_text.lower()
 
         # Codec
         if "hevc" in dt_lower or "h265" in dt_lower or "h.265" in dt_lower:
@@ -136,17 +154,24 @@ class MediaProfile(BaseModel):
         elif "h264" in dt_lower or "h.264" in dt_lower or "avc" in dt_lower:
             profile.codec = "H.264"
 
-        # HDR
-        if "dolby vision" in dt_lower or "dv" in dt_lower:
+        # 动态范围（HDR）
+        # Emby/Jellyfin 的 VideoRange 枚举值常见：SDR / HDR / HDR10 / HDR 10 / HDR10Plus / Dolby Vision / HLG
+        # 注意：Dolby Vision、HLG 不含 "hdr" 子串，原逻辑会误判为 SDR，这里完整覆盖
+        vr = (video_range or "").lower()
+        if "dolby" in vr or "dolby vision" in dt_lower or "dovi" in dt_lower:
             profile.hdr = "Dolby Vision"
-        elif "hdr10" in dt_lower or "hdr 10" in dt_lower:
+        elif "hdr10" in vr or "hdr 10" in vr or "hdr10" in dt_lower or "hdr 10" in dt_lower:
             profile.hdr = "HDR10"
-        elif "hdr" in dt_lower:
+        elif "hlg" in vr or "hlg" in dt_lower:
+            profile.hdr = "HLG"
+        elif "hdr" in vr or "hdr" in dt_lower:
             profile.hdr = "HDR"
-        elif video_range and "hdr" in video_range.lower():
-            profile.hdr = "HDR"
-        else:
+        elif "sdr" in vr or "sdr" in dt_lower:
+            # 仅在视频范围或文件名明确标注 SDR 时才显示，避免把"未知"误标为 SDR
             profile.hdr = "SDR"
+        else:
+            # 获取不到 HDR / SDR 时直接留空，不默认填充 SDR
+            profile.hdr = ""
 
         return profile
 
@@ -176,6 +201,9 @@ class SeriesInfo(BaseModel):
     episode_count: Optional[int] = None  # 总集数
     episodes: List[int] = Field(default_factory=list)  # 所有集数列表
     range: str = ""  # 集数范围显示 (如: E12-E13)
+    library_owned_episodes: Optional[int] = None  # 媒体库该季实际已有集数（查 Emby）
+    season_total_episodes: Optional[int] = None  # 该季理论总集数（查 TMDB 按季）
+    season_year: Optional[int] = None  # 该季实际首播年份（查 TMDB 按季，非整剧首播年）
 
 
 class NotificationEvent(BaseModel):

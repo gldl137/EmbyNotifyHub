@@ -246,3 +246,78 @@ def get_tv_episode_count(tmdb_id: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"TMDB TV 信息处理异常: {e}")
         return {}
+
+
+def get_tv_season_info(tmdb_id: str, season_number: int) -> Optional[Dict[str, Any]]:
+    """
+    从 TMDB 获取某剧「指定季」的信息
+
+    Returns:
+        {"episode_count": int, "year": int|None}；查询失败/无配置/无数据时返回 None
+        该季理论总集数从 episodes 列表长度推算（TMDB 季详情顶层无 episode_count 字段）；
+        年份取该季 air_date 的首播年份（而非整剧首播年）。
+    """
+    if not tmdb_id or not season_number:
+        return None
+
+    cache_key = f"tmdb:tv:season:info:{tmdb_id}:{season_number}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    tmdb_config = config_manager.get_tmdb_config()
+    api_key = tmdb_config.api_key
+    if not api_key:
+        logger.warning("TMDB API Key 未配置")
+        return None
+
+    try:
+        url = f"{TMDB_BASE_URL}/tv/{tmdb_id}/season/{season_number}"
+        params = {"api_key": api_key, "language": "zh-CN"}
+        request_kwargs = {"params": params, "timeout": 10}
+        if tmdb_config.proxy_enabled and tmdb_config.proxy_url:
+            request_kwargs["proxies"] = {
+                "http": tmdb_config.proxy_url,
+                "https": tmdb_config.proxy_url,
+            }
+
+        response = requests.get(url, **request_kwargs)
+        response.raise_for_status()
+        data = response.json()
+        # TMDB 的 /tv/{id}/season/{n} 详情接口顶层不含 episode_count 字段，
+        # 需从该季 episodes 列表长度推算「该季理论总集数」
+        episodes = data.get("episodes") or []
+        episode_count = len(episodes) if episodes else data.get("episode_count")
+
+        # 该季首播年份（air_date 形如 "2019-08-21"）
+        year = None
+        air_date = data.get("air_date") or ""
+        if air_date:
+            try:
+                year = int(air_date[:4])
+            except (ValueError, TypeError):
+                year = None
+
+        result = {"episode_count": episode_count, "year": year}
+        cache_config = config_manager.get_cache_config()
+        cache.set(cache_key, result, ttl=cache_config.tmdb_ttl)
+        logger.debug(f"TMDB 第{season_number}季: 集数={episode_count}, 年份={year}")
+        return result
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"TMDB 季信息请求失败: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"TMDB 季信息处理异常: {e}")
+        return None
+
+
+def get_tv_season_episode_count(tmdb_id: str, season_number: int) -> Optional[int]:
+    """
+    从 TMDB 获取某剧「指定季」的理论总集数（兼容旧调用）
+
+    Returns:
+        该季 episode_count；查询失败/无配置/无数据时返回 None
+    """
+    info = get_tv_season_info(tmdb_id, season_number)
+    return info.get("episode_count") if info else None

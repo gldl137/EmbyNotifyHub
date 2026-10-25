@@ -10,6 +10,9 @@ from app.core.constants import (
     CATEGORY_NAME_MAP,
     # 事件定义
     EVENT_MAP,
+    # 事件别名归一化
+    EVENT_ALIAS_MAP,
+    normalize_event_type,
     # 动作解析
     resolve_action,
     get_event_info,
@@ -47,6 +50,9 @@ __all__ = [
     "CATEGORY_NAME_MAP",
     # ===== 事件定义 =====
     "EVENT_MAP",
+    # ===== 事件别名归一化 =====
+    "EVENT_ALIAS_MAP",
+    "normalize_event_type",
     # ===== 动作解析 =====
     "resolve_action",
     "get_event_info",
